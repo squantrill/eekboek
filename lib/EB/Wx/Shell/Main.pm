@@ -5,8 +5,8 @@ use utf8;
 # Author          : Johan Vromans
 # Created On      : Sun Jul 31 23:35:10 2005
 # Last Modified By: Johan Vromans
-# Last Modified On: Sat Aug  4 21:33:04 2012
-# Update Count    : 438
+# Last Modified On: Tue Jun  4 20:47:05 2013
+# Update Count    : 550
 # Status          : Unknown, Use with caution!
 
 ################ Common stuff ################
@@ -15,6 +15,8 @@ package main;
 
 our $cfg;
 our $app;
+our $_have_threads;
+
 use EB::Wx::FakeApp;
 
 package EB::Wx::Shell::Main;
@@ -38,8 +40,13 @@ use Wx qw[
 	  wxDefaultPosition
 	  wxDefaultSize
 	  wxICON_ERROR
+	  wxICON_EXCLAMATION
+	  wxICON_INFORMATION
+	  wxICON_ERROR
 	  wxOK
        ];
+
+my $DONE_EVENT : shared = Wx::NewEventType;
 
 sub OnInit {
     my( $self ) = shift;
@@ -53,8 +60,11 @@ sub run {
     my ( $pkg, $opts ) = @_;
     $opts = {} unless defined $opts;
 
-    binmode(STDOUT, ":encoding(utf8)");
-    binmode(STDERR, ":encoding(utf8)");
+    # binmode :encoding(utf8) crashes threads.
+    # See https://rt.perl.org/rt3/Ticket/Display.html?id=41121
+    my $enc = $_have_threads ? ":utf8" : ":encoding(utf8)";
+    binmode( STDOUT, $enc );
+    binmode( STDERR, $enc );
 
     # Preliminary initialize config.
     EB->app_init( { app => $EekBoek::PACKAGE } );
@@ -101,6 +111,7 @@ sub run {
     #*Fcntl::O_EXLOCK = sub() { 0 };
     #*Fcntl::O_TEMPORARY = sub() { 0 };
 
+
     if ( ( defined($opts->{wizard}) ? $opts->{wizard} : 1 )
 	 && !$opts->{config}
        ) {
@@ -110,7 +121,7 @@ sub run {
 	EB->app_init( { app => $EekBoek::PACKAGE, %$opts } );
     }
 
-    my $app = EB::Wx::Shell::Main->new();
+    $app = EB::Wx::Shell::Main->new();
     $app->SetAppName($EekBoek::PACKAGE);
     $app->SetVendorName("Squirrel Consultancy");
 
@@ -142,6 +153,7 @@ sub run {
 	$config = $cfg->std_config;
 	$config = $cfg->std_config_alt unless -f $config;
     }
+
     $frame->{_ebcfg} = $config if -e $config;
     $frame->FillHistory($histfile);
     $frame->GetPreferences;
@@ -155,7 +167,25 @@ sub run {
     $app->SetTopWindow($frame);
     $frame->Show(1);
     $frame->RunCommand(undef);
+
+    my $worker;
+    my $t = Wx::ConfigBase::Get->Read( "preferences/updatecheck" );
+    my $check = $t ne "" ? $t : 1;
+
+    $t = Wx::ConfigBase::Get->ReadInt('updcheck/success');
+    Wx::Event::EVT_COMMAND( $frame, -1, $DONE_EVENT, \&update_check_done );
+    if ( $check && ( !$t or time > $t + 24*60*60 ) ) { # daily
+	if ( $_have_threads ) {
+	    $worker = threads->create( \&update_check );
+	}
+	else {
+	    # Take the potential penalty of a 2-second delay.
+	    update_check();
+	}
+    }
+
     $app->MainLoop();
+    $worker->join if $worker;
 }
 
 # Since Wx::Bitmap cannot be convinced to use a search path, we
@@ -170,6 +200,73 @@ no warnings 'redefine';
     $wxbitmapnew->($self, @rest);
 };
 use warnings 'redefine';
+
+################ Subroutines ################
+
+sub update_check {
+    my ( $force ) = @_;
+    use EB::Tools::UpdateCheck;
+    my $res = EB::Tools::UpdateCheck::check();
+    my $msg = $res->{current} || "";
+    $msg .= "|";
+    $msg .= $res->{relnotes} if $res->{relnotes};
+    $msg .= "|FORCE" if $force;
+    my $threvent = new Wx::PlThreadEvent( -1, $DONE_EVENT, $msg );
+    Wx::PostEvent( $app->GetTopWindow, $threvent );
+}
+
+sub update_check_done {
+    my( $frame, $event ) = @_;
+
+    my $style = wxICON_ERROR;
+    my $res = $event->GetData;
+    goto BAILOUT unless defined $res;
+
+    my $config = Wx::ConfigBase::Get;
+    $config->WriteInt( 'updcheck/success',  time );
+
+    my ( $v, $relnotes, $force ) = split( /\|/, $res );
+    goto BAILOUT unless $v;
+
+    # No message if our version is not older than the release version.
+    $style = wxICON_INFORMATION;
+    goto BAILOUT
+      if EB::Tools::UpdateCheck::version_compare( $EekBoek::VERSION, $v ) >= 0;
+
+    # No message if we hushed this release version.
+    $style = wxICON_EXCLAMATION;
+    my $checked = $force ? 0 : $config->Read('updcheck/version');
+    goto BAILOUT
+      if $checked && EB::Tools::UpdateCheck::version_compare( $checked, $v ) >= 0;
+
+    require EB::Wx::Shell::UpdateDialog;
+    my $d = EB::Wx::Shell::UpdateDialog->new;
+    $d->forced if $force;
+    $d->{l_msg}->SetLabel
+      ( _T("EekBoek versie x.yy.zz is beschikbaar.") . "\n\n" .
+	_T("U wordt aangeraden de release notes te lezen en daarna te ugraden.")
+      );
+    $d->ShowModal;
+
+    # Suppress further messages for this version, if requested.
+    $config->Write( 'updcheck/version',  $v )
+	if $d->hush;
+
+    $d->Destroy;
+    return;
+
+  BAILOUT:
+    return unless $force;
+
+    $d = Wx::MessageDialog->new ( undef,
+				  $v
+				  ? _T("Geen updates gevonden.")
+				  : _T("Geen informatie gevonden."),
+				  _T("Geen updates"),
+				  $style, wxDefaultPosition );
+    $d->ShowModal;
+    $d->Destroy;
+}
 
 ################ Subroutines ################
 
@@ -248,5 +345,9 @@ Gebruik: {prog} [options] [file ...]
 EndOfUsage
     CORE::exit $exit if defined $exit && $exit != 0;
 }
+
+package Wx::Printout;
+
+sub new {}
 
 1;

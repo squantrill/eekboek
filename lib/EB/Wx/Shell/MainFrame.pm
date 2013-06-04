@@ -2,6 +2,8 @@
 
 package main;
 
+our $_have_threads;
+
 use strict;
 
 our $cfg;
@@ -135,6 +137,7 @@ sub new {
 	use constant MENU_REP_AR => Wx::NewId();
 	use constant MENU_REP_VAT => Wx::NewId();
 	use constant MENU_HELP_SUPPORT => Wx::NewId();
+	use constant MENU_HELP_CHECKUPDATES => Wx::NewId();
 
 #	###WARNING: Re-generating will loose
 #	$self->__set_menubar();
@@ -196,6 +199,7 @@ sub new {
 
 	Wx::Event::EVT_MENU($self, wxID_HELP,  \&OnHelp);
 	Wx::Event::EVT_MENU($self, MENU_HELP_SUPPORT, \&OnSupport);
+	Wx::Event::EVT_MENU($self, MENU_HELP_CHECKUPDATES, \&OnCheckUpdates);
 	Wx::Event::EVT_MENU($self, wxID_ABOUT, \&OnAbout);
 
 	#### End of MenuBar
@@ -269,6 +273,7 @@ sub __set_menubar {
 	$wxglade_tmp_menu = Wx::Menu->new();
 	$wxglade_tmp_menu->Append(wxID_HELP, _T("&Hulp..."), "");
 	$wxglade_tmp_menu->AppendSeparator();
+	$wxglade_tmp_menu->Append(MENU_HELP_CHECKUPDATES, _T("Controleren op nieuwe versies..."), "");
 	$wxglade_tmp_menu->Append(MENU_HELP_SUPPORT, _T("Ondersteuning..."), "");
 	$wxglade_tmp_menu->AppendSeparator();
 	$wxglade_tmp_menu->Append(wxID_ABOUT, _T("Over..."), "");
@@ -727,6 +732,13 @@ sub OnAbout {
 	$md->ShowModal;
 	$md->Destroy;
 
+# end wxGlade
+}
+
+sub OnCheckUpdates {
+    my ($self, $event) = @_;
+# wxGlade: EB::Wx::Shell::MainFrame::OnCheckUpdates <event_handler>
+    EB::Wx::Shell::Main::update_check(1);
 # end wxGlade
 }
 
