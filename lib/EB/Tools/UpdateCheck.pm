@@ -9,7 +9,44 @@ use EekBoek;
 
 use constant STATUS_URL => 'http://www.eekboek.nl/status';
 
-sub check {
+# Not neccessarily object oriented, but it is nice to have an object
+# for namespace purposes.
+
+sub new {
+    my ( $pkg, %args ) = @_;
+    my $self = { url => STATUS URL, %args };
+    bless( $self,$pkg );
+}
+
+sub fetch {
+    my ( $self ) = @_;
+
+    # Create a User Agent.
+    use LWP::UserAgent;
+    my $ua = LWP::UserAgent->new;
+    $ua->timeout(2);
+    $ua->agent( "$EekBoek::PACKAGE/"
+		. ( $::app ? "Wx" : "" )
+		. "UpdateCheck_$EekBoek::VERSION" );
+    $ua->env_proxy;
+
+    # The return hash.
+    my $o = {};
+
+    # Get info.
+    my $response = $ua->get(STATUS_URL);
+    $self->{result} = undef, return unless $response->is_success;
+
+    # Extract known fields.
+    my $t = $response->decoded_content;
+    for ( qw( current reldate relnotes note ) ) {
+	$o->{$_} = $1 if $t =~ m/^$_:\s+(.*)/m;
+    }
+
+    $self->{result} = $o;
+}
+
+sub check {			# LEGACY
     # Create a User Agent.
     use LWP::UserAgent;
     my $ua = LWP::UserAgent->new;
@@ -50,3 +87,10 @@ unless (caller) {
 
 
 1;
+
+=begin TODO
+
+   0   fetch OK, running latest version
+   1   fetch OK, running later version
+  -1   fetch OK, no info
+  -2   fetch NOK
